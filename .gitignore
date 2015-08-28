@@ -1,0 +1,7 @@
+*.o
+*.d
+*.pyc
+.*.swp
+.*.swo
+testdata/
+cryptsetup-*/
