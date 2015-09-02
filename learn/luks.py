@@ -49,7 +49,7 @@ class Cryptor(object):
 
 		self.cipherMode = cipherMode
 		self.key = key
-		self.keylen = len(key)
+		self.iv_size = AES.block_size
 
 		if cipherMode == "ecb":
 			self.mode = AES.MODE_ECB
@@ -68,17 +68,18 @@ class Cryptor(object):
 			raise Exception("Unsupported chipher mode")
 
 	def IV(self, index):
-		return None
+		return "\0" * self.iv_size
 
 	def _iv_plain(self, index):
-		return struct.pack("<I", index % (2 ** 32)).ljust(self.keylen, "\0")[:self.keylen]
+		return struct.pack("<I", index & (2 ** 32 - 1)).ljust(self.iv_size, "\0")[:self.iv_size]
 
 	def _iv_plain64(self, index):
-		return struct.pack("<Q", index % (2 ** 64)).ljust(self.keylen, "\0")[:self.keylen]
+		return struct.pack("<Q", index & (2 ** 64 - 1)).ljust(self.iv_size, "\0")[:self.iv_size]
 
 	def _iv_essiv(self, index):
-		salt = self.hash_func.new(self.key).hexdigest()
-		raise NotImplementedError
+		salt = self.hash_func.new(self.key).hexdigest().decode('hex')[:self.iv_size]
+		c = AES.new(salt, AES.MODE_ECB)
+		return c.encrypt(self._iv_plain64(index))
 
 	def decrypt(self, index, data):
 		c = AES.new(self.key, self.mode, self.IV(index))
@@ -144,9 +145,10 @@ class LUKSDevice(object):
 	def blockReadBytes(self, index, count):
 		"""Reads count bytes from sector starting at index."""
 		blockCount = int(math.ceil(float(count) / self.block_size))
-		return self.blockRead(self, index, blockCount, key)[:count]
+		return self.blockRead(index, blockCount)[:count]
 
 	def _AFmerge(self, splitKey, stripes):
+		print "AFmerge", repr(splitKey), stripes
 		raise NotImplementedError
 
 	def _masterKeyFromSlot(self, slot, passphrase):
@@ -186,3 +188,4 @@ if __name__ == "__main__":
 	dev = LUKSDevice(BlockDevice("../testdata/Alphabet512.img" if len(sys.argv) < 2 else sys.argv[1]))
 	pwd = "password0"
 	# pwd = getpass.getpass("Enter password: ")
+	# dev.findKeyForPassphrase(pwd)
