@@ -4,9 +4,10 @@ import struct
 import getpass
 import math
 
-import pbkdf2
 from Crypto.Hash import SHA, SHA256, SHA512, RIPEMD
 from Crypto.Cipher import AES
+
+import my_pbkdf2
 
 __all__ = ["LUKSDevice"]
 
@@ -26,6 +27,7 @@ hash_func_by_spec = {
 	"ripemd160": RIPEMD,
 }
 
+str_split_chunks = lambda s, size: (s[i:i + size] for i in xrange(0, len(s), size))
 
 class BlockDevice(file):
 
@@ -147,23 +149,33 @@ class LUKSDevice(object):
 		blockCount = int(math.ceil(float(count) / self.block_size))
 		return self.blockRead(index, blockCount)[:count]
 
-	def _AFmerge(self, splitKey, stripes):
-		print "AFmerge", repr(splitKey), stripes
-		raise NotImplementedError
+	def _xor(self, b1, b2):
+		return "".join(chr(ord(a1) ^ ord(a2)) for a1, a2 in zip(b1, b2))
+
+	def _af_diffuse(self, data):
+		P = lambda s: self.hash_func.new(s).hexdigest().decode('hex')
+		P_mag = len(P("abc"))
+
+		blocks = str_split_chunks(data, P_mag)
+		return "".join(P(struct.pack(">I", i) + b) for i, b in enumerate(blocks))[:len(data)]
+	
+	def _AFmerge(self, splitKey):
+		blocks = list(str_split_chunks(splitKey, self.keylen))
+		d_n_1 = reduce(lambda d, s: self._af_diffuse(self._xor(d, s)), blocks[:-1], "\0" * self.keylen)
+		assert len(d_n_1) == self.keylen
+		return self._xor(d_n_1, blocks[-1])
 
 	def _masterKeyFromSlot(self, slot, passphrase):
-		pbkdf_gen = pbkdf2.PBKDF2(passphrase, slot.salt, slot.iterations, digestmodule=self.hash_func)
-		pbkdf_pwd = pbkdf_gen.read(self.keylen)
-		print "Hash generated", repr(pbkdf_pwd)
+		pbkdf_pwd = my_pbkdf2.pbkdf2(passphrase, slot.salt, slot.iterations, self.keylen)
 
 		# FIXME: Don't abuse instance var here
 		self.crytor = self._newCryptor(pbkdf_pwd)
+		# FIXME: looks like the reference implementation works on whole blocks
 		splitKey = self.blockReadBytes(slot.start_sector, self.keylen * slot.af_stripes)
-		return self._AFmerge(splitKey, slot.af_stripes)
+		return self._AFmerge(splitKey)
 
 	def _matchesKey(self, candidate):
-		pbkdf_gen = pbkdf2.PBKDF2(candidate, self.mkDigestSalt, self.iterations, digestmodule=self.hash_func)
-		pbkdf_pwd = pbkdf_gen.read(LUKS_DIGESTSIZE)
+		pbkdf_pwd = my_pbkdf2.pbkdf2(candidate, self.mkDigestSalt, self.iterations, LUKS_DIGESTSIZE)
 		return pbkdf_pwd == self.mkDigest
 
 	# Public
@@ -176,7 +188,7 @@ class LUKSDevice(object):
 		return (slot for slot in self.keyslots if slot.active)
 
 	def findKeyForPassphrase(self, passphrase):
-		for slot in self.activeSlots():
+		for i, slot in enumerate(self.activeSlots()):
 			candidate = self._masterKeyFromSlot(slot, passphrase)
 			if self._matchesKey(candidate):
 				return candidate
@@ -185,7 +197,10 @@ class LUKSDevice(object):
 
 if __name__ == "__main__":
 	import sys
-	dev = LUKSDevice(BlockDevice("../testdata/Alphabet512.img" if len(sys.argv) < 2 else sys.argv[1]))
-	pwd = "password0"
-	# pwd = getpass.getpass("Enter password: ")
-	# dev.findKeyForPassphrase(pwd)
+	dev = LUKSDevice(BlockDevice("../testdata/Alphabet512_ecb.img" if len(sys.argv) < 2 else sys.argv[1]))
+	# pwd = "password0"
+	pwd = getpass.getpass("Enter password: ")
+	if dev.findKeyForPassphrase(pwd):
+		print "Key matches"
+	else:
+		print "No available key with this passphrase"
