@@ -82,9 +82,8 @@ class Cryptor(object):
 		return struct.pack("<Q", index & (2 ** 64 - 1)).ljust(self.iv_size, "\0")[:self.iv_size]
 
 	def _iv_essiv(self, index):
-		salt = self.hash_func.new(self.key).digest()[:self.iv_size]
-		c = AES.new(salt, AES.MODE_ECB)
-		return c.encrypt(self._iv_plain(index))
+		salt = self.hash_func.new(self.key).digest()
+		return AES.new(salt, AES.MODE_ECB).encrypt(self._iv_plain(index))
 
 	def decrypt(self, index, data):
 		c = AES.new(self.key, self.mode, self.IV(index))
