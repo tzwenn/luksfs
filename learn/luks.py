@@ -37,6 +37,9 @@ class BlockDevice(file):
 	def __init__(self, fileName, block_size=512):
 		file.__init__(self, fileName, "rb")
 		self._block_size = block_size
+		self.seek(0, 2) # Seek to end
+		self._block_count = self.tell()
+		self.seek(0) # Seek to start
 
 	def blockRead(self, index, count=1):
 		self.seek(index * self._block_size)
@@ -46,6 +49,9 @@ class BlockDevice(file):
 	def block_size(self):
 		return self._block_size
 
+	@property
+	def block_count(self):
+		return self._block_count / self._block_size
 
 class Cryptor(object):
 
@@ -139,16 +145,6 @@ class LUKSDevice(object):
 	def _setKey(self, key):
 		self.cryptor = Cryptor(self.cipherName, self.cipherMode, key)
 
-	def blockRead(self, index, count=1, countSecAsZero=False):
-		"""Reads sector at index. If countSecAsZero is true, decryption will use generate IVs like it was sector 0"""
-		secOffset = index if countSecAsZero else False
-		return "".join(self.cryptor.decrypt(sec - secOffset, self.file.blockRead(sec)) for sec in xrange(index, index + count))
-
-	def blockReadBytes(self, index, count, countSecAsZero=False):
-		"""Reads count bytes from sector starting at index."""
-		blockCount = int(math.ceil(float(count) / self.block_size))
-		return self.blockRead(index, blockCount, countSecAsZero)[:count]
-
 	def _xor(self, b1, b2):
 		return "".join(chr(ord(a1) ^ ord(a2)) for a1, a2 in zip(b1, b2))
 
@@ -167,10 +163,10 @@ class LUKSDevice(object):
 
 	def _masterKeyFromSlot(self, slot, passphrase):
 		pbkdf_pwd = my_pbkdf2.pbkdf2(passphrase, slot.salt, slot.iterations, self.keylen)
-		# FIXME: Don't abuse instance var here
 		self._setKey(pbkdf_pwd)
-		# FIXME: looks like the reference implementation works on whole blocks
-		splitKey = self.blockReadBytes(slot.start_sector, self.keylen * slot.af_stripes, True)
+		count = int(math.ceil(float(self.keylen * slot.af_stripes) / self.file.block_size))
+		cryptedSplitKey = (self.file.blockRead(sec) for sec in xrange(slot.start_sector, slot.start_sector + count))
+		splitKey = "".join(self.cryptor.decrypt(sec, block) for sec, block in enumerate(cryptedSplitKey))
 		return self._AFmerge(splitKey)
 
 	def _matchesKey(self, candidate):
@@ -182,6 +178,14 @@ class LUKSDevice(object):
 	@property
 	def block_size(self):
 		return self.file.block_size
+
+	@property
+	def block_count(self):
+		return self.file.block_count - self.payloadOffset
+
+	def blockRead(self, index, count=1):
+		"""Reads sector at index. If countSecAsZero is true, decryption will use generate IVs like it was sector 0"""
+		return "".join(self.cryptor.decrypt(sec, self.file.blockRead(sec + self.payloadOffset)) for sec in xrange(index, index + count))
 
 	def activeSlots(self):
 		return (slot for slot in self.keyslots if slot.active)
@@ -198,8 +202,8 @@ class LUKSDevice(object):
 if __name__ == "__main__":
 	import sys
 	dev = LUKSDevice(BlockDevice("../testdata/Alphabet512_ecb.img" if len(sys.argv) < 2 else sys.argv[1]))
-	# pwd = "password0"
-	pwd = getpass.getpass("Enter password: ")
+	pwd = "password0"
+	# pwd = getpass.getpass("Enter password: ")
 	if dev.findKeyForPassphrase(pwd):
 		print "Key matches"
 	else:
