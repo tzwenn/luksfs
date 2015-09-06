@@ -27,7 +27,10 @@ hash_func_by_spec = {
 	"ripemd160": RIPEMD,
 }
 
-str_split_chunks = lambda s, size: (s[i:i + size] for i in xrange(0, len(s), size))
+
+def str_split_chunks(s, size):
+	return (s[i:i + size] for i in xrange(0, len(s), size))
+
 
 class BlockDevice(file):
 
@@ -79,9 +82,9 @@ class Cryptor(object):
 		return struct.pack("<Q", index & (2 ** 64 - 1)).ljust(self.iv_size, "\0")[:self.iv_size]
 
 	def _iv_essiv(self, index):
-		salt = self.hash_func.new(self.key).hexdigest().decode('hex')[:self.iv_size]
+		salt = self.hash_func.new(self.key).digest()[:self.iv_size]
 		c = AES.new(salt, AES.MODE_ECB)
-		return c.encrypt(self._iv_plain64(index))
+		return c.encrypt(self._iv_plain(index))
 
 	def decrypt(self, index, data):
 		c = AES.new(self.key, self.mode, self.IV(index))
@@ -116,9 +119,6 @@ class LUKSDevice(object):
 		self._readKeyslots()
 		self.hash_func = hash_func_by_spec[self.hashSpec]
 
-	def _strip(self, s):
-		return s.partition("\0")[0]
-
 	def _readHeader(self):
 		self.magic, self.version, \
 			self.cipherName, self.cipherMode, \
@@ -129,25 +129,26 @@ class LUKSDevice(object):
 
 		assert self.magic == LUKS_MAGIC
 
-		self.cipherMode = self._strip(self.cipherMode)
-		self.hashSpec = self._strip(self.hashSpec)
-		self.cipherName = self._strip(self.cipherName)
-		self.uuid = self._strip(self.uuid)
+		self.cipherMode = self.cipherMode.strip('\0')
+		self.hashSpec = self.hashSpec.strip('\0')
+		self.cipherName = self.cipherName.strip('\0')
+		self.uuid = self.uuid.strip('\0')
 
 	def _readKeyslots(self):
 		self.keyslots = [LUKSKeyslot(self.file.read(LUKSKeyslot.slotSz)) for i in xrange(LUKS_NUMKEYS)]
 
-	def _newCryptor(self, key):
-		return Cryptor(self.cipherName, self.cipherMode, key)
+	def _setKey(self, key):
+		self.cryptor = Cryptor(self.cipherName, self.cipherMode, key)
 
-	def blockRead(self, index, count=1):
-		"""Reads sector at index."""
-		return "".join(self.crytor.decrypt(sec, self.file.blockRead(sec)) for sec in xrange(index, index + count))
+	def blockRead(self, index, count=1, countSecAsZero=False):
+		"""Reads sector at index. If countSecAsZero is true, decryption will use generate IVs like it was sector 0"""
+		secOffset = index if countSecAsZero else False
+		return "".join(self.cryptor.decrypt(sec - secOffset, self.file.blockRead(sec)) for sec in xrange(index, index + count))
 
-	def blockReadBytes(self, index, count):
+	def blockReadBytes(self, index, count, countSecAsZero=False):
 		"""Reads count bytes from sector starting at index."""
 		blockCount = int(math.ceil(float(count) / self.block_size))
-		return self.blockRead(index, blockCount)[:count]
+		return self.blockRead(index, blockCount, countSecAsZero)[:count]
 
 	def _xor(self, b1, b2):
 		return "".join(chr(ord(a1) ^ ord(a2)) for a1, a2 in zip(b1, b2))
@@ -158,7 +159,7 @@ class LUKSDevice(object):
 
 		blocks = str_split_chunks(data, P_mag)
 		return "".join(P(struct.pack(">I", i) + b) for i, b in enumerate(blocks))[:len(data)]
-	
+
 	def _AFmerge(self, splitKey):
 		blocks = list(str_split_chunks(splitKey, self.keylen))
 		d_n_1 = reduce(lambda d, s: self._af_diffuse(self._xor(d, s)), blocks[:-1], "\0" * self.keylen)
@@ -167,11 +168,10 @@ class LUKSDevice(object):
 
 	def _masterKeyFromSlot(self, slot, passphrase):
 		pbkdf_pwd = my_pbkdf2.pbkdf2(passphrase, slot.salt, slot.iterations, self.keylen)
-
 		# FIXME: Don't abuse instance var here
-		self.crytor = self._newCryptor(pbkdf_pwd)
+		self._setKey(pbkdf_pwd)
 		# FIXME: looks like the reference implementation works on whole blocks
-		splitKey = self.blockReadBytes(slot.start_sector, self.keylen * slot.af_stripes)
+		splitKey = self.blockReadBytes(slot.start_sector, self.keylen * slot.af_stripes, True)
 		return self._AFmerge(splitKey)
 
 	def _matchesKey(self, candidate):
@@ -191,6 +191,7 @@ class LUKSDevice(object):
 		for i, slot in enumerate(self.activeSlots()):
 			candidate = self._masterKeyFromSlot(slot, passphrase)
 			if self._matchesKey(candidate):
+				self._setKey(candidate)
 				return candidate
 		return None
 
