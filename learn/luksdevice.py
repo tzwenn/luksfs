@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 import struct
-import getpass
 import math
 
 from Crypto.Hash import SHA, SHA256, SHA512, RIPEMD
@@ -119,7 +118,7 @@ class LUKSDevice(object):
 
 	def __init__(self, block_file):
 		self.file = block_file
-		self._key = None
+		self.cryptor = None
 		self._readHeader()
 		self._readKeyslots()
 		self.hash_func = hash_func_by_spec[self.hashSpec]
@@ -141,6 +140,9 @@ class LUKSDevice(object):
 
 	def _readKeyslots(self):
 		self.keyslots = [LUKSKeyslot(self.file.read(LUKSKeyslot.slotSz)) for i in xrange(LUKS_NUMKEYS)]
+
+	def _countFullBlocks(self, count):
+		return int(math.ceil(float(count) / self.block_size))
 
 	def _setKey(self, key):
 		self.cryptor = Cryptor(self.cipherName, self.cipherMode, key)
@@ -164,7 +166,7 @@ class LUKSDevice(object):
 	def _masterKeyFromSlot(self, slot, passphrase):
 		pbkdf_pwd = my_pbkdf2.pbkdf2(passphrase, slot.salt, slot.iterations, self.keylen)
 		self._setKey(pbkdf_pwd)
-		count = int(math.ceil(float(self.keylen * slot.af_stripes) / self.file.block_size))
+		count = self._countFullBlocks(self.keylen * slot.af_stripes)
 		cryptedSplitKey = (self.file.blockRead(sec) for sec in xrange(slot.start_sector, slot.start_sector + count))
 		splitKey = "".join(self.cryptor.decrypt(sec, block) for sec, block in enumerate(cryptedSplitKey))
 		return self._AFmerge(splitKey)
@@ -187,6 +189,13 @@ class LUKSDevice(object):
 		"""Reads sector at index. If countSecAsZero is true, decryption will use generate IVs like it was sector 0"""
 		return "".join(self.cryptor.decrypt(sec, self.file.blockRead(sec + self.payloadOffset)) for sec in xrange(index, index + count))
 
+	def read(self, offset, size):
+		start_block = offset / self.block_size
+		start_offset = offset % self.block_size
+		count = self._countFullBlocks(offset + size) - start_block + 1
+		data = self.blockRead(start_block, count)
+		return data[start_offset:start_offset + size]
+
 	def activeSlots(self):
 		return (slot for slot in self.keyslots if slot.active)
 
@@ -195,15 +204,14 @@ class LUKSDevice(object):
 			candidate = self._masterKeyFromSlot(slot, passphrase)
 			if self._matchesKey(candidate):
 				self._setKey(candidate)
-				return candidate
-		return None
+				return True
+		return False
 
 
 if __name__ == "__main__":
-	import sys
-	dev = LUKSDevice(BlockDevice("../testdata/Alphabet512_ecb.img" if len(sys.argv) < 2 else sys.argv[1]))
-	pwd = "password0"
-	# pwd = getpass.getpass("Enter password: ")
+	import sys, getpass
+	dev = LUKSDevice(BlockDevice("../testdata/Alphabet512.img" if len(sys.argv) < 2 else sys.argv[1]))
+	pwd = getpass.getpass("Enter password: ")
 	if dev.findKeyForPassphrase(pwd):
 		print "Key matches"
 	else:
