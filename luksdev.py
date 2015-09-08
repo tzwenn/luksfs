@@ -30,27 +30,6 @@ def str_split_chunks(s, size):
 	return (s[i:i + size] for i in xrange(0, len(s), size))
 
 
-class BlockDevice(file):
-
-	def __init__(self, fileName, block_size=512):
-		file.__init__(self, fileName, "rb")
-		self._block_size = block_size
-		self.seek(0, 2) # Seek to end
-		self._block_count = self.tell()
-		self.seek(0) # Seek to start
-
-	def blockRead(self, index, count=1):
-		self.seek(index * self._block_size)
-		return self.read(self._block_size * count)
-
-	@property
-	def block_size(self):
-		return self._block_size
-
-	@property
-	def block_count(self):
-		return self._block_count / self._block_size
-
 class Cryptor(object):
 
 	def __init__(self, cipherName, cipherMode, key):
@@ -150,7 +129,7 @@ class LUKSDevice(object):
 		return "".join(chr(ord(a1) ^ ord(a2)) for a1, a2 in zip(b1, b2))
 
 	def _af_diffuse(self, data):
-		P = lambda s: self.hash_func.new(s).hexdigest().decode('hex')
+		P = lambda s: self.hash_func.new(s).digest()
 		P_mag = len(P("abc"))
 
 		blocks = str_split_chunks(data, P_mag)
@@ -209,7 +188,7 @@ class LUKSDevice(object):
 
 if __name__ == "__main__":
 	import sys, getpass
-	dev = LUKSDevice(BlockDevice("testdata/Alphabet512.img" if len(sys.argv) < 2 else sys.argv[1]))
+	dev = LUKSDevice(blkdev.BlockDevice("testdata/Alphabet512.img" if len(sys.argv) < 2 else sys.argv[1]))
 	pwd = getpass.getpass("Enter password: ")
 	if dev.findKeyForPassphrase(pwd):
 		print "Key matches"

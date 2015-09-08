@@ -50,7 +50,9 @@ class LUKSFS(fuse.Operations):
 
 
 def mount(root, mountpoint, pwd):
-	fuse.FUSE(LUKSFS(root), mountpoint, nothreads=True, foreground=True)
+	fs = LUKSFS(root)
+	print >> sys.stderr, "\"%s\" opened. Press ^C to unmount." % root
+	fuse.FUSE(fs, mountpoint, nothreads=True, foreground=True)
 	
 
 if __name__ == "__main__":
