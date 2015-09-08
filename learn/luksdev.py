@@ -1,11 +1,10 @@
-#!/usr/bin/env python
-
 import struct
 import math
 
 from Crypto.Hash import SHA, SHA256, SHA512, RIPEMD
 from Crypto.Cipher import AES
 
+import blkdev
 import my_pbkdf2
 
 __all__ = ["LUKSDevice"]
@@ -186,7 +185,7 @@ class LUKSDevice(object):
 		return self.file.block_count - self.payloadOffset
 
 	def blockRead(self, index, count=1):
-		"""Reads sector at index. If countSecAsZero is true, decryption will use generate IVs like it was sector 0"""
+		"""Reads sector at index."""
 		return "".join(self.cryptor.decrypt(sec, self.file.blockRead(sec + self.payloadOffset)) for sec in xrange(index, index + count))
 
 	def read(self, offset, size):

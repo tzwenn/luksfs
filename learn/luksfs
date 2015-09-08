@@ -1,9 +1,11 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 import time
 import stat
 
-from luksdevice import LUKSDevice, BlockDevice
+import blkdev
+import luksdev
+
 import fuse
 
 ST_RDONLY = 1
@@ -12,7 +14,7 @@ class LUKSFS(fuse.Operations):
 
 	def __init__(self, root):
 		now = time.time()
-		self.dev = LUKSDevice(BlockDevice(root))
+		self.dev = luksdev.LUKSDevice(blkdev.BlockDevice(root))
 		if not self.dev.findKeyForPassphrase(pwd):
 			print "No available key with this passphrase"
 			sys.exit(2)
