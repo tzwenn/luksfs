@@ -5,3 +5,5 @@
 .*.swo
 testdata/
 cryptsetup-*/
+luks-mount/
+mount/

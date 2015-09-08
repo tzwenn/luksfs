@@ -209,7 +209,7 @@ class LUKSDevice(object):
 
 if __name__ == "__main__":
 	import sys, getpass
-	dev = LUKSDevice(BlockDevice("../testdata/Alphabet512.img" if len(sys.argv) < 2 else sys.argv[1]))
+	dev = LUKSDevice(BlockDevice("testdata/Alphabet512.img" if len(sys.argv) < 2 else sys.argv[1]))
 	pwd = getpass.getpass("Enter password: ")
 	if dev.findKeyForPassphrase(pwd):
 		print "Key matches"
