@@ -1,6 +1,9 @@
 import ctypes
+import platform
 
 __all__ = ["pbkdf2"]
+
+name = "libssl.%s" % ("dylib" if platform.system() == "Darwin" else "so")
 
 libssl = ctypes.CDLL("libssl.dylib")
 libssl.PKCS5_PBKDF2_HMAC_SHA1.restype = ctypes.c_int
